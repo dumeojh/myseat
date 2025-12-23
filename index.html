@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>스마트 좌석 배치 v4.0 (모바일 연동)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        :root { --primary-gray: #4b5563; --mid-gray: #9ca3af; --light-gray: #e5e7eb; --bg-gray: #f3f4f6; --font-main: 'Gowun Dodum', sans-serif; --highlight-color: #ff4b4b; }
+        body { font-family: var(--font-main); background-color: var(--bg-gray); margin: 0; padding: 20px; user-select: none; }
+        #teacher-ui { display: none; gap: 20px; max-width: 1600px; margin: 0 auto; height: 95vh; }
+        #student-ui { display: none; text-align: center; padding-top: 50px; }
+        .left-panel { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+        .menu-card { background: #fff; border: 1px solid #d1d5db; margin-bottom: 5px; }
+        .accordion-header { padding: 14px; background: #f9fafb; cursor: pointer; font-weight: bold; color: var(--primary-gray); }
+        .accordion-content { max-height: 0; overflow: hidden; transition: max-height 0.3s; }
+        .active .accordion-content { max-height: 600px; border-top: 1px solid #eee; }
+        .accordion-inner { padding: 15px; }
+        .btn-rect { width: 100%; padding: 12px; border: 1px solid #374151; font-weight: bold; cursor: pointer; margin-bottom: 5px; }
+        .btn-dark { background: #374151; color: white; }
+        .btn-mid { background: #6b7280; color: white; }
+        .btn-light { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+        .right-panel { flex-grow: 1; display: flex; flex-direction: column; align-items: center; background: #d1d5db; padding: 40px; overflow: auto; border-radius: 8px; }
+        #seatingGrid { display: grid; gap: 15px; }
+        .seat { width: 110px; height: 110px; position: relative; }
+        .seat-inner { position: relative; width: 100%; height: 100%; transition: transform 0.6s; transform-style: preserve-3d; }
+        .flipped .seat-inner { transform: rotateY(180deg); }
+        .seat-front, .seat-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border: 2px solid #374151; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white; }
+        .seat-front { transform: rotateY(180deg); }
+        .seat-back { background: #9ca3af; color: white; font-size: 2.5rem; font-weight: bold; }
+        .seat-back::after { content: "?"; }
+        .seat.is-none .seat-back::after { content: "X"; color: #ff6b6b; }
+        .highlight-reveal { z-index: 100; outline: 6px solid var(--highlight-color); box-shadow: 0 0 25px rgba(255, 75, 75, 0.8); animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { outline-offset: 0; } 50% { outline-offset: 5px; } 100% { outline-offset: 0; } }
+        .student-input { width: 80%; padding: 15px; font-size: 1.5rem; border: 2px solid var(--primary-gray); margin-bottom: 20px; text-align: center; }
+        .student-btn { width: 80%; padding: 20px; font-size: 1.5rem; background: var(--primary-gray); color: white; border: none; font-weight: bold; }
+        #qr-container { background: white; padding: 10px; display: inline-block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="teacher-ui">
+    <div class="left-panel">
+        <button onclick="openMobileLink()" class="btn-rect btn-dark">📱 모바일 접속 열기 (QR)</button>
+        <div id="qr-area" style="display:none; text-align:center; background:white; padding:10px; border:1px solid #ddd;">
+            <div id="qr-container"></div>
+            <p style="font-size:0.8rem;">학생들은 이 QR을 찍어주세요</p>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top:5px;">
+            <button class="btn-rect btn-mid" onclick="startPlacement('id_order')">번호순</button>
+            <button class="btn-rect btn-mid" onclick="startPlacement('lottery')">제비뽑기 시작</button>
+        </div>
+        <div class="menu-card active">
+            <div class="accordion-header">👥 학생 명단</div>
+            <div class="accordion-content" style="max-height: 400px;">
+                <div class="accordion-inner">
+                    <input type="file" id="excelInput" accept=".xlsx, .xls" style="display:none;" onchange="readExcel(this)">
+                    <button class="btn-rect btn-light" onclick="document.getElementById('excelInput').click()" style="background-color: #e1effe;">📂 엑셀 불러오기</button>
+                    <div id="studentList"></div>
+                    <button class="btn-rect btn-light" onclick="addStudentRow()">+ 학생 추가</button>
+                    <button class="btn-rect btn-light" onclick="saveMasterList()">💾 명단 저장</button>
+                </div>
+            </div>
+        </div>
+        <button onclick="window.print()" class="btn-rect btn-light">🖨️ 결과 인쇄</button>
+    </div>
+    <div class="right-panel">
+        <div style="width:500px; padding:15px; background:#4b5563; color:white; text-align:center; margin-bottom:40px; font-weight:bold;">칠 판</div>
+        <div id="seatingGrid"></div>
+    </div>
+</div>
+
+<div id="student-ui">
+    <h1 id="status-msg">자기 자리를 확인하세요</h1>
+    <input type="number" id="myNumber" class="student-input" placeholder="본인 번호 입력">
+    <br>
+    <button onclick="revealMySeat()" id="revealBtn" class="student-btn">자리 확인하기!</button>
+    <p id="result-msg" style="margin-top:20px; font-weight:bold;"></p>
+</div>
+<input type="file" id="excelInput" accept=".xlsx, .xls" style="display:none;" onchange="readExcel(this)">
+
+<button class="btn-rect btn-light" onclick="document.getElementById('excelInput').click()" style="background-color: #e1effe;">
+    📂 엑셀 불러오기
+</button>
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyAsCQ-4Kx5Cpiu2IHpRiBWzCQ5SX3qzkdI",
+        authDomain: "smartseating-4a78c.firebaseapp.com",
+        databaseURL: "https://smartseating-4a78c-default-rtdb.firebaseio.com/", 
+        projectId: "smartseating-4a78c",
+        storageBucket: "smartseating-4a78c.firebasestorage.app",
+        messagingSenderId: "514146659460",
+        appId: "1:514146659460:web:91038077f453ce87a5e6d1",
+        measurementId: "G-NTYPDER042"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get('mode');
+
+    if (mode === 'student') {
+        document.getElementById('student-ui').style.display = 'block';
+    } else {
+        document.getElementById('teacher-ui').style.display = 'flex';
+        initTeacher();
+    }
+
+    function initTeacher() {
+        loadMasterList(); 
+        generateGrid();
+        db.ref('reveal_event').on('value', (snapshot) => {
+            const val = snapshot.val();
+            if (val && val.id) revealSeat(val.id);
+        });
+    }
+
+    function generateGrid() {
+        const grid = document.getElementById('seatingGrid');
+        grid.style.gridTemplateColumns = `repeat(6, 110px)`;
+        grid.innerHTML = '';
+        for (let i = 0; i < 36; i++) {
+            const seat = document.createElement('div');
+            seat.className = 'seat';
+            seat.innerHTML = `<div class="seat-inner"><div class="seat-back"></div><div class="seat-front"></div></div>`;
+            seat.addEventListener('dblclick', () => seat.classList.toggle('is-none'));
+            grid.appendChild(seat);
+        }
+    }
+
+    function startPlacement(type) {
+        const students = Array.from(document.querySelectorAll('.student-row')).map(row => ({
+            id: row.querySelector('.in-id').value,
+            name: row.querySelector('.in-name').value.trim()
+        })).filter(s => s.name);
+        const availableSeats = Array.from(document.querySelectorAll('.seat:not(.is-none)'));
+        if (type === 'lottery') availableSeats.sort(() => Math.random() - 0.5);
+        db.ref('reveal_event').set(null);
+        availableSeats.forEach((seat, i) => {
+            if (students[i]) {
+                seat.dataset.id = students[i].id;
+                const front = seat.querySelector('.seat-front');
+                front.innerHTML = `<div style="font-size:0.8rem;color:#666">${students[i].id}</div><div style="font-size:1.1rem;font-weight:bold">${students[i].name}</div>`;
+                seat.classList.remove('flipped', 'highlight-reveal');
+            }
+        });
+    }
+
+    function revealSeat(studentId) {
+        const target = document.querySelector(`.seat[data-id="${studentId}"]`);
+        if (target) {
+            document.querySelectorAll('.seat').forEach(s => s.classList.remove('highlight-reveal'));
+            target.classList.add('flipped', 'highlight-reveal');
+        }
+    }
+
+    function openMobileLink() {
+        const area = document.getElementById('qr-area');
+        area.style.display = area.style.display === 'none' ? 'block' : 'none';
+        if (area.style.display === 'block') {
+            const studentUrl = window.location.href.split('?')[0] + '?mode=student';
+            document.getElementById('qr-container').innerHTML = '';
+            new QRCode(document.getElementById('qr-container'), { text: studentUrl, width: 150, height: 150 });
+        }
+    }
+
+    function revealMySeat() {
+        const id = document.getElementById('myNumber').value;
+        if (!id) return alert("번호를 입력하세요!");
+        db.ref('reveal_event').set({ id: id, time: Date.now() });
+        document.getElementById('revealBtn').disabled = true;
+        document.getElementById('revealBtn').innerText = "공개 완료!";
+        document.getElementById('status-msg').innerText = "칠판을 확인하세요!";
+    }
+
+    function addStudentRow(id = '', name = '') {
+        const div = document.createElement('div'); div.className = 'student-row'; div.style.display = 'flex'; div.style.marginBottom = '2px';
+        div.innerHTML = `<input type="text" class="in-id" value="${id}" style="width:30px"><input type="text" class="in-name" value="${name}" style="flex:1">`;
+        document.getElementById('studentList').appendChild(div);
+    }
+    function saveMasterList() { localStorage.setItem('seat_master', JSON.stringify(Array.from(document.querySelectorAll('.student-row')).map(r => ({ id: r.querySelector('.in-id').value, name: r.querySelector('.in-name').value })))); alert('저장됨'); }
+    function loadMasterList() { const data = JSON.parse(localStorage.getItem('seat_master') || '[]'); data.forEach(s => addStudentRow(s.id, s.name)); if (data.length === 0) for (let i = 0; i < 5; i++) addStudentRow(); }
+
+    function readExcel(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet);
+            if (confirm(`${rows.length}명의 데이터를 불러올까요?`)) {
+                document.getElementById('studentList').innerHTML = '';
+                rows.forEach(row => {
+                    const grade = row['학년'] || ''; const ban = row['반'] || ''; const num = row['번호'] || ''; const name = row['성명'] || row['이름'] || '';
+                    addStudentRow(num, grade ? `${grade}-${ban} ${name}` : name);
+                });
+            }
+        };
+        reader.readAsArrayBuffer(file);
+        input.value = '';
+    }
+    function readExcel(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]; // 첫 번째 시트 선택
+        const rows = XLSX.utils.sheet_to_json(sheet); // JSON으로 변환
+        
+        if (confirm(`${rows.length}명의 데이터를 불러올까요?`)) {
+            document.getElementById('studentList').innerHTML = ''; // 기존 명단 비우기
+            rows.forEach(row => {
+                // 엑셀 헤더: 학년, 반, 번호, 성명(또는 이름)
+                const grade = row['학년'] || ''; 
+                const ban = row['반'] || ''; 
+                const num = row['번호'] || ''; 
+                const name = row['성명'] || row['이름'] || '';
+                
+                // 학생 추가 함수 호출
+                addStudentRow(num, grade ? `${grade}-${ban} ${name}` : name);
+            });
+        }
+    };
+    reader.readAsArrayBuffer(file);
+    input.value = ''; // 초기화
+}
+</script>
+</body>
+</html>
