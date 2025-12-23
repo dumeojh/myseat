@@ -81,10 +81,10 @@
     <p id="result-msg" style="margin-top:20px; font-weight:bold;"></p>
 </div>
 <input type="file" id="excelInput" accept=".xlsx, .xls" style="display:none;" onchange="readExcel(this)">
+  
 
-<button class="btn-rect btn-light" onclick="document.getElementById('excelInput').click()" style="background-color: #e1effe;">
-    📂 엑셀 불러오기
-</button>
+
+
 <script>
     const firebaseConfig = {
         apiKey: "AIzaSyAsCQ-4Kx5Cpiu2IHpRiBWzCQ5SX3qzkdI",
@@ -132,23 +132,53 @@
         }
     }
 
-    function startPlacement(type) {
-        const students = Array.from(document.querySelectorAll('.student-row')).map(row => ({
-            id: row.querySelector('.in-id').value,
-            name: row.querySelector('.in-name').value.trim()
-        })).filter(s => s.name);
-        const availableSeats = Array.from(document.querySelectorAll('.seat:not(.is-none)'));
-        if (type === 'lottery') availableSeats.sort(() => Math.random() - 0.5);
-        db.ref('reveal_event').set(null);
-        availableSeats.forEach((seat, i) => {
-            if (students[i]) {
-                seat.dataset.id = students[i].id;
-                const front = seat.querySelector('.seat-front');
-                front.innerHTML = `<div style="font-size:0.8rem;color:#666">${students[i].id}</div><div style="font-size:1.1rem;font-weight:bold">${students[i].name}</div>`;
-                seat.classList.remove('flipped', 'highlight-reveal');
-            }
-        });
+  function startPlacement(type) {
+    // 1. 입력된 학생 명단 가져오기
+    const students = Array.from(document.querySelectorAll('.student-row')).map(row => ({
+        id: row.querySelector('.in-id').value,
+        name: row.querySelector('.in-name').value.trim()
+    })).filter(s => s.name !== "");
+
+    // 2. 사용할 수 있는 자리(X 표시 안 된 자리) 찾기
+    const availableSeats = Array.from(document.querySelectorAll('.seat:not(.is-none)'));
+
+    if (students.length > availableSeats.length) {
+        alert(`학생 수(${students.length}명)가 빈 자리(${availableSeats.length}개)보다 많습니다!`);
+        return;
     }
+
+    // 3. 제비뽑기 모드일 경우 자리 순서를 무작위로 섞기
+    if (type === 'lottery') {
+        availableSeats.sort(() => Math.random() - 0.5);
+    } else {
+        // 번호순일 경우 학생 명단을 번호순으로 정렬 (선택 사항)
+        students.sort((a, b) => Number(a.id) - Number(b.id));
+    }
+
+    // 4. 모든 자리 초기화 (기존 데이터 삭제 및 뒤집기 해제)
+    document.querySelectorAll('.seat').forEach(seat => {
+        delete seat.dataset.id;
+        seat.querySelector('.seat-front').innerHTML = '';
+        seat.classList.remove('flipped', 'highlight-reveal');
+    });
+
+    // 5. 서버(Firebase)의 기존 이벤트 초기화
+    db.ref('reveal_event').set(null);
+
+    // 6. 섞인 자리에 학생 배치
+    availableSeats.forEach((seat, i) => {
+        if (students[i]) {
+            seat.dataset.id = students[i].id; // 학생 번호를 자리 데이터에 저장
+            const front = seat.querySelector('.seat-front');
+            front.innerHTML = `
+                <div style="font-size:0.8rem;color:#666">${students[i].id}</div>
+                <div style="font-size:1.1rem;font-weight:bold">${students[i].name}</div>
+            `;
+        }
+    });
+
+    alert(type === 'lottery' ? "제비뽑기가 완료되었습니다! 카드가 뒤집혔습니다." : "번호순 배치가 완료되었습니다.");
+}
 
     function revealSeat(studentId) {
         const target = document.querySelector(`.seat[data-id="${studentId}"]`);
